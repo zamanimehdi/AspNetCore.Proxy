@@ -25,6 +25,12 @@ namespace AspNetCore.Proxy.Tests
             services.AddControllers();
             services.AddHttpClient("TimeoutClient", c => c.Timeout = TimeSpan.FromMilliseconds(0.001));
             services.AddHttpClient("BaseAddressClient", c => c.BaseAddress = new Uri("https://jsonplaceholder.typicode.com"));
+            services.AddHttpClient("TargetHttpClient")
+                .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler()
+                {
+                    UseDefaultCredentials = true
+                })
+                .ConfigureHttpClient(c => c.BaseAddress = new Uri("https://localhost:4123"));
         }
 
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
@@ -75,6 +81,7 @@ namespace AspNetCore.Proxy.Tests
 
     public class MvcController : ControllerBase
     {
+
         [Route("api/posts")]
         public Task ProxyPostRequest()
         {
@@ -218,5 +225,33 @@ namespace AspNetCore.Proxy.Tests
 
             return this.HttpProxyAsync($"https://jsonplaceholder.typicode.com/posts/{postId}", options);
         }
+
+        [Route("api/target/{**rest}")]
+        public Task TargetProxyCatchAll(string rest)
+        {
+            var queryString = this.Request.QueryString.Value;
+            var url = $"targetapi/{rest}{queryString}";
+            return this.HttpProxyAsync(url, TargetOptions());
+        }
+
+        private HttpProxyOptions TargetOptions()
+        {
+            var httpOptions = HttpProxyOptionsBuilder.Instance
+                .WithHttpClientName("TargetHttpClient")
+                .WithAfterReceive((c, hrm) =>
+                {
+                    // Alter the content in  some way before sending back to client.
+                    return Task.CompletedTask;
+                })
+                .WithHandleFailure(async (c, e) =>
+                {
+                    // Return a custom error response.
+                    //c.Response.StatusCode = 403;
+                    await c.Response.WriteAsync(e.Message);
+                }).Build();
+
+            return httpOptions;
+        }
+
     }
 }
